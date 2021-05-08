@@ -10,118 +10,8 @@ from tqdm import tqdm
 from collections import Counter
 import torch.nn.functional as F
 from  torch.nn.utils.rnn import pad_sequence
-
-
-class LyricSTM(nn.Module):
-    def __init__(self, n_hidden: int, feature_size: int, alphabet: list):
-        super().__init__()
-        self.feature_size = feature_size
-        self.n_hidden = n_hidden
-        self.alphabet = alphabet
-
-        self.lstm = nn.LSTMCell(self.feature_size, self.n_hidden)
-        self.lstm2 = nn.LSTMCell(self.n_hidden, self.n_hidden)
-        self.linear = nn.Sequential(
-            nn.Dropout(0.2),
-            nn.Linear(self.n_hidden, 128),
-            nn.SELU(),
-            nn.Linear(128, len(alphabet))
-        )
-
-    def forward(self, x, predict=0):
-        outputs = []
-        n_samples = x.size(1)
-
-        genres = x[0,:,-len(unique_genres):]
-
-        h_t = torch.zeros(n_samples, self.n_hidden, dtype=torch.float32)
-        c_t = torch.zeros(n_samples, self.n_hidden, dtype=torch.float32)
-
-        h2_t = torch.zeros(n_samples, self.n_hidden, dtype=torch.float32)
-        c2_t = torch.zeros(n_samples, self.n_hidden, dtype=torch.float32)
-
-        for i in range(x.size()[0]):
-            h_t, c_t = self.lstm(x[i], (h_t, c_t))
-            h2_t, c2_t = self.lstm2(h_t, (h2_t, c2_t))
-            output = self.linear(h2_t)
-            outputs.append(output)
-
-        for i in range(predict):
-            max_idx = torch.argmax(output, 1, keepdim=True)
-            one_hot = torch.FloatTensor(output.shape)
-            one_hot.zero_()
-            one_hot.scatter_(1, max_idx, 1)
-            one_hot = torch.cat((one_hot, genres), dim=1)
-            h_t, c_t = self.lstm(one_hot, (h_t, c_t))
-            h2_t, c2_t = self.lstm2(h_t, (h2_t, c2_t))
-            output = self.linear(h2_t)
-            outputs.append(output)
-            if all(torch.argmax(output[j]) == len(self.alphabet) - 1 for j in range(len(output))):
-                break
-
-        outputs = torch.stack(outputs, dim=0)
-        return outputs
-
-
-def load_songs():
-    df = pd.read_csv("data/train.csv")
-    df = df[df["Language"] == "en"]
-    df = df[df["Genre"] != "Indie"]
-    genre = df["Genre"]
-    df = df.sample(frac=1).reset_index(drop=True)
-    minc = 2000
-    song_dfs = []
-    for count, name in zip(genre.value_counts(), genre.value_counts().index):
-        song = df[df["Genre"] == name]
-        fraction = min(minc / len(song), 1)
-        song = song.sample(frac=fraction).reset_index(drop=True)
-        song_dfs.append(song)
-
-    allsongs_df = pd.concat(song_dfs)
-    allsongs_df = allsongs_df.sample(frac=1).reset_index(drop=True)
-    songs = allsongs_df["Lyrics"].values.tolist()
-    genres = allsongs_df["Genre"].values.tolist()
-
-    songs = [clean_up(song) for song in songs]
-    return songs, genres
-
-
-def clean_up(song):
-    filter = r"\[(.*?)\]"
-    song = re.sub(filter, "", song)
-    blacklist = "<>@[]{}\x7f\t=+|~*%/\\_^;#$`§\x19\x13"
-    song = "".join(char for char in song if char not in blacklist and not char.isnumeric())
-    song = song.encode("ascii", "ignore").decode()
-    return song
-
-def get_vector(key, alphabet):
-    return alphabet.index(key)
-
-
-def encode(data, alphabet, genres, unique_genres):
-    maxlen = len(max(data, key=len))
-    #maxlen = min(1000, maxlen)
-    encoded = torch.zeros(maxlen+1, len(data), len(alphabet)+len(unique_genres))
-    indeces = torch.zeros(maxlen+1, len(data))
-    for genre, (j, song) in zip(genres, enumerate(data)):
-        for i, letter in enumerate(song):
-            if i > maxlen:
-                continue
-            encoded[i][j][alphabet.index(letter)] = 1
-            encoded[i][j][len(alphabet)+unique_genres.index(genre)] = 1
-            indeces[i][j] = alphabet.index(letter)
-        for i in range(maxlen-min(len(song), maxlen)+1):
-            encoded[i+min(len(song), maxlen)][j][-1] = 1
-            indeces[i+min(len(song), maxlen)][j] = len(alphabet)-1
-    return encoded, indeces
-
-
-def decode(data, alphabet):
-    return ["".join(alphabet[np.argmax(letter)] for letter in song) for song in data]
-
-
-def get_alphabet(data):
-    return sorted(list(set(char for song in data for word in song for char in word))) + ["EOS"]
+from util import encode, decode, load_songs, get_alphabet, find_char
+from Network import LyricSTM
 
 
 if __name__ == "__main__":
@@ -148,15 +38,20 @@ if __name__ == "__main__":
     prompt = ["When you think "]*len(unique_genres)
     prompt_genre = unique_genres
     prompt_encoded, _ = encode(prompt, alphabet, prompt_genre, unique_genres)
-    X_prompt = prompt_encoded
-    model = torch.load("models/lowlr/model_checkpoint_5")#LyricSTM(n_hidden=256, feature_size=len(alphabet)+len(unique_genres), alphabet=alphabet)
+    X_prompt = prompt_encoded[:-1]
+    model_ = torch.load("models/fixednet/model_checkpoint_6")
+    model = LyricSTM(model_.n_hidden, model_.feature_size, model_.alphabet)
+    model.load_state_dict(model_.state_dict())
 
     criterion = nn.CrossEntropyLoss()
 
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
     with torch.no_grad():
-        predict = 5000
-        pred = model(X_prompt, predict=predict)
+        predict = 2000
+        pred = model(X_prompt, predict=predict, temp=0.45)
         pred = pred.permute(1,0,2)
-        print(decode(pred, alphabet))
+        for m, (s, g) in enumerate(zip(decode(pred, alphabet), prompt_genre)):
+            print(g)
+            print(prompt[m] + s[len(prompt[m]):])
+            print("--- Next ---")
