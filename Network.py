@@ -5,7 +5,7 @@ from tqdm import tqdm
 from collections import Counter
 from util import encode, decode, load_songs, get_alphabet
 import numpy as np
-unique_genres = ["Rock", "Metal", "Country", "Jazz", "Folk"]
+unique_genres = ["Rock", "Metal", "Country", "Jazz", "Hip-Hop"]
 
 class LyricSTM(nn.Module):
     def __init__(self, n_hidden: int, feature_size: int, alphabet: list):
@@ -24,7 +24,7 @@ class LyricSTM(nn.Module):
         )
         self.soft = nn.Softmax(dim=1)
 
-    def forward(self, x, predict=0, temp=5):
+    def forward(self, x, predict=0, temp=0.45):
         outputs = []
         n_samples = x.size(1)
 
@@ -51,8 +51,6 @@ class LyricSTM(nn.Module):
                 hot = np.random.choice(np.arange(len(p)), p=p.numpy())
                 idx[i][0] = hot
 
-
-
             one_hot = torch.FloatTensor(output.shape)
             one_hot.zero_()
             one_hot.scatter_(1, idx, 1)
@@ -73,7 +71,7 @@ class LyricSTM(nn.Module):
 
 if __name__ == "__main__":
     minibatch_size = 32
-    model_file = "models/fixednet/model"
+    model_file = "models/alphanet/model"
 
     songs, genres = load_songs()
     alphabet = get_alphabet(songs)
@@ -85,12 +83,12 @@ if __name__ == "__main__":
         count.update(song)
     print(count)
 
-    prompt = ["When you think "]*len(unique_genres)
+    prompt = ["when you think "]*len(unique_genres)
     prompt_genre = unique_genres
     prompt_encoded, _ = encode(prompt, alphabet, prompt_genre, unique_genres)
     X_prompt = prompt_encoded[:-1]
-    model = LyricSTM(n_hidden=256, feature_size=len(alphabet)+len(unique_genres), alphabet=alphabet)
-
+    #model = LyricSTM(n_hidden=320, feature_size=len(alphabet)+len(unique_genres), alphabet=alphabet)
+    model = torch.load("models/alphanet/model_checkpoint_0")
     criterion = nn.CrossEntropyLoss()
 
     optimizer = optim.Adam(model.parameters(), lr=0.01)
@@ -102,8 +100,8 @@ if __name__ == "__main__":
             if (j/32) % 100 == 0:
                 print("-- j -- j -- j -- j -- j -- j -- j -- j -- j -- j --")
                 with torch.no_grad():
-                    predict = 5000
-                    pred = model(X_prompt, predict=predict)
+                    predict = 1000
+                    pred = model(X_prompt, predict=predict, temp=0.45)
                     pred = pred.permute(1, 0, 2)
                     for m, (s, g) in enumerate(zip(decode(pred, alphabet), prompt_genre)):
                         print(g)
@@ -126,7 +124,7 @@ if __name__ == "__main__":
         torch.save(model, model_file+"_checkpoint_"+str(i))
         if i >= 0:
             with torch.no_grad():
-                predict = 5000
+                predict = 1000
                 pred = model(X_prompt, predict=predict)
                 pred = pred.permute(1,0,2)
                 print(decode(pred, alphabet))

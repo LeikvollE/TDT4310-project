@@ -19,13 +19,12 @@ import nltk
 import statistics
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-def tf_idf(songs, pred):
+def tf_idf(songs, preds):
     vectorizer = TfidfVectorizer()
-    X = vectorizer.fit_transform(songs + [pred]).toarray()
-    return X[:-1], X[-1]
+    X = vectorizer.fit_transform(songs + preds).toarray()
+    return X[:-len(preds)], X[-len(preds):]
 
-def semantic_sim(gts, pred):
-    tf_vectors, pred_vector = tf_idf(gts, pred)
+def semantic_sim(tf_vectors, pred_vector):
     scores = []
     for vector in tf_vectors:
         scores.append(cosine_dist(vector, pred_vector))
@@ -34,11 +33,16 @@ def semantic_sim(gts, pred):
 def cosine_dist(song1, song2):
     return np.dot(song1, song2)/(np.linalg.norm(song1) * np.linalg.norm(song2))
 
-def lyrical_uniqueness(gts, pred):
-    tf_vectors, pred_vector = tf_idf(gts, pred)
+def lyrical_uniqueness(tf_vectors, pred_vector):
     scores = []
+    duplicates = 0
     for vector in tf_vectors:
-        scores.append(cosine_dist(vector, pred_vector))
+        s = cosine_dist(vector, pred_vector)
+        scores.append(s if s < 1.0 else 0)
+        if s == 1.0:
+            duplicates += 1
+    if duplicates > 1:
+        print("Duplicates: ", duplicates - 1)
     return max(scores)
 
 def vocab_quality(songs, preds):
@@ -57,22 +61,17 @@ def vocab_quality(songs, preds):
 
 if __name__ == "__main__":
     minibatch_size = 32
-    model_file = "models/fixednet/model"
 
     songs, genres = load_songs()
-    songs_dict = defaultdict(lambda: [])
-    for song, genre in zip(songs, genres):
-        songs_dict[genre].append(song)
+
     alphabet = get_alphabet(songs)
     unique_genres = sorted(list(set(genres)))
 
-    prompt = ["When you think "]*len(unique_genres)
+    prompt = ["when you think "]*len(unique_genres)
     prompt_genre = unique_genres
     prompt_encoded, _ = encode(prompt, alphabet, prompt_genre, unique_genres)
     X_prompt = prompt_encoded[:-1]
-    model_ = torch.load("models/fixednet/model_checkpoint_5")
-    model = LyricSTM(model_.n_hidden, model_.feature_size, model_.alphabet)
-    model.load_state_dict(model_.state_dict())
+    model = torch.load("models/alphanet/model_checkpoint_2")
 
 
     predictions = {}
@@ -102,10 +101,17 @@ if __name__ == "__main__":
             pred = model(X_prompt, predict=predict, temp=0.45)
             pred = pred.permute(1,0,2)
             pred_decoded = decode(pred, alphabet)
-            predictions[genre] = pred_decoded
             all_preds += pred_decoded
+    all_tfs, pred_tfs = tf_idf(songs, all_preds)
 
     vocab_quality(songs, all_preds)
+
+    for i, genre in zip(range(0, len(unique_genres) * prompts_per_genre, prompts_per_genre), unique_genres):
+        predictions[genre] = pred_tfs[i:i + prompts_per_genre]
+
+    songs_dict = defaultdict(lambda: [])
+    for song, genre in zip(all_tfs, genres):
+        songs_dict[genre].append(song)
 
     for genre in predictions.keys():
         avg = defaultdict(lambda: 0)
@@ -115,5 +121,21 @@ if __name__ == "__main__":
                 avg[genre2] += semantic_sim(songs_dict[genre2], s)
         for genre2 in predictions.keys():
             print(f"--{genre2} {avg[genre2]/prompts_per_genre}")
+    """
+    best = defaultdict(lambda: 0)
+    best_i = defaultdict(lambda: 0)
+    avg = defaultdict(lambda: [])
+    for i, (song, genre) in enumerate(zip(all_tfs, genres)):
+        sim = lyrical_uniqueness(songs_dict[genre], song)
+        avg[genre].append(sim)
+    for genre in avg.keys():
+        print(f"--- {genre} ---")
+        print(f"sim: {best[genre]}")
+        print(songs[best_i[genre]])
 
+        for genre2 in best_i.keys():
+            print(f"Similarity to {genre2}: ", semantic_sim(songs_dict[genre2], all_tfs[best_i[genre]]))
+        print(f"avg: {statistics.mean(avg[genre])} songs: {statistics.stdev(avg[genre])} ")
+        print("\n")
+    """
     print("\n")

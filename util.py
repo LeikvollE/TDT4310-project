@@ -7,9 +7,9 @@ import re
 def load_songs():
     df = pd.read_csv("data/train.csv")
     df = df[df["Language"] == "en"]
-    df = df[df.Genre.isin(["Rock", "Metal", "Country", "Jazz", "Folk"])]
+    df = df[df.Genre.isin(["Rock", "Metal", "Country", "Jazz", "Hip-Hop"])]
     df['Length'] = df['Lyrics'].str.len()
-    df = df[(df.Length > 400) & (df.Length < 2000)]
+    df = df[(df.Length > 400) & (df.Length < 3000)]
     genre = df["Genre"]
     df = df.sample(frac=1).reset_index(drop=True)
     minc = 2000
@@ -33,7 +33,7 @@ def clean_up(song):
     filter = r"\[(.*?)\]"
     song = re.sub(filter, "", song)
     blacklist = "<>@[]{}\x7f\t=+|~*%/\\_^;#$`§\x19\x13"
-    song = "".join(char for char in song if char not in blacklist and not char.isnumeric())
+    song = "".join(char.lower() for char in song if char not in blacklist and not char.isnumeric())
     song = song.encode("ascii", "ignore").decode()
     return song
 
