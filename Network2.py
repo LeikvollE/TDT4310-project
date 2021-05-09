@@ -5,10 +5,9 @@ from tqdm import tqdm
 from collections import Counter
 from util import encode, decode, load_songs, get_alphabet, prompt_network
 import numpy as np
-unique_genres = ["Rock", "Metal", "Country", "Jazz", "Hip-Hop"]
 
 class LyricSTM(nn.Module):
-    def __init__(self, n_hidden: int, feature_size: int, alphabet: list):
+    def __init__(self, n_hidden: int, feature_size: int, alphabet: list, unique_genres: list):
         super().__init__()
         self.feature_size = feature_size
         self.n_hidden = n_hidden
@@ -18,7 +17,7 @@ class LyricSTM(nn.Module):
         self.lstm2 = nn.LSTMCell(self.n_hidden, self.n_hidden)
         self.linear = nn.Sequential(
             nn.Dropout(0.2),
-            nn.Linear(self.n_hidden, 512),
+            nn.Linear(self.n_hidden + len(unique_genres), 512),
             nn.SELU(),
             nn.Linear(512, len(alphabet))
         )
@@ -37,9 +36,10 @@ class LyricSTM(nn.Module):
         c2_t = torch.zeros(n_samples, self.n_hidden, dtype=torch.float32)
 
         for i in range(x.size()[0]):
-            h_t, c_t = self.lstm(x[i], (h_t, c_t))
+            h_t, c_t = self.lstm(x[i][:,:-len(unique_genres)], (h_t, c_t))
             h2_t, c2_t = self.lstm2(h_t, (h2_t, c2_t))
-            output = self.linear(h2_t)
+            #output = self.linear(h2_t)
+            output = self.linear(torch.cat((h2_t, x[i][:,-len(unique_genres):]), dim=1))
             outputs.append(output)
 
         for i in range(predict):
@@ -56,10 +56,11 @@ class LyricSTM(nn.Module):
             one_hot.scatter_(1, idx, 1)
             outputs.append(one_hot)
 
-            one_hot = torch.cat((one_hot, genres), dim=1)
+            #one_hot = torch.cat((one_hot, genres), dim=1)
             h_t, c_t = self.lstm(one_hot, (h_t, c_t))
             h2_t, c2_t = self.lstm2(h_t, (h2_t, c2_t))
-            output = self.linear(h2_t)
+            #output = self.linear(h2_t)
+            output = self.linear(torch.cat((h2_t, genres), dim=1))
 
 
             if all(torch.argmax(one_hot[j]) == len(self.alphabet) - 1 for j in range(len(one_hot))):
@@ -71,18 +72,17 @@ class LyricSTM(nn.Module):
 
 if __name__ == "__main__":
     minibatch_size = 32
-    model_file = "models/alphanet/model"
+    model_file = "models/newnetonegenre/model"
 
-    songs, genres = load_songs()
+    unique_genres = ["Jazz"]#sorted(["Rock", "Metal", "Country", "Jazz", "Hip-Hop"])
+
+    songs, genres = load_songs(unique_genres)
     alphabet = get_alphabet(songs)
-    unique_genres = sorted(list(set(genres)))
 
-    prompt = ["when you think "]*len(unique_genres)
+    prompt = ["When you think "]*len(unique_genres)
     prompt_genre = unique_genres
-    prompt_encoded, _ = encode(prompt, alphabet, prompt_genre, unique_genres)
-    X_prompt = prompt_encoded[:-1]
-    #model = LyricSTM(n_hidden=320, feature_size=len(alphabet)+len(unique_genres), alphabet=alphabet)
-    model = torch.load("models/alphanet/model_checkpoint_0")
+
+    model = LyricSTM(256, len(alphabet), alphabet, unique_genres)
 
     criterion = nn.CrossEntropyLoss()
 
@@ -92,16 +92,6 @@ if __name__ == "__main__":
     for i in range(n_steps):
         print("Step", i)
         for j in tqdm(range(0, len(songs), minibatch_size)):
-            if (j/32) % 150 == 0:
-                print("-- j -- j -- j -- j -- j -- j -- j -- j -- j -- j --")
-                with torch.no_grad():
-                    predict = 1000
-                    pred = model(X_prompt, predict=predict, temp=0.45)
-                    pred = pred.permute(1, 0, 2)
-                    for m, (s, g) in enumerate(zip(decode(pred, alphabet), prompt_genre)):
-                        print(g)
-                        print(prompt[m] + s[len(prompt[m]):])
-                        print("--- Next ---")
             batch_songs, batch_genres = songs[j: j+minibatch_size], genres[j: j+minibatch_size]
             batch_encoded, batch_targets = encode(batch_songs, alphabet, batch_genres, unique_genres)
             X = batch_encoded[:-1]

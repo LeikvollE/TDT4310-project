@@ -21,25 +21,12 @@ if __name__ == "__main__":
     songs, genres = load_songs()
     alphabet = get_alphabet(songs)
     unique_genres = list(set(genres))
-    print(len(unique_genres))
-    print(len(alphabet))
-    """
-    encoded, targets = encode(songs, alphabet)
-    X = encoded[:-1]
-    Y = targets[1:]
-    Y = Y.long()
-    Y = Y.permute(1,0)
-    print(Y)"""
-    count = Counter()
-    for song in songs:
-        count.update(song)
-    print(count)
 
     prompt = ["When you think "]*len(unique_genres)
     prompt_genre = unique_genres
     prompt_encoded, _ = encode(prompt, alphabet, prompt_genre, unique_genres)
     X_prompt = prompt_encoded[:-1]
-    model_ = torch.load("models/fixednet/model_checkpoint_6")
+    model_ = torch.load("models/fixednet/model_checkpoint_0")
     model = LyricSTM(model_.n_hidden, model_.feature_size, model_.alphabet)
     model.load_state_dict(model_.state_dict())
 
