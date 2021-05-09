@@ -4,20 +4,22 @@ import pandas as pd
 import re
 
 
-def load_songs():
+def load_songs(unique_genres: list, n_songs: int = 10000):
     df = pd.read_csv("data/train.csv")
     df = df[df["Language"] == "en"]
-    df = df[df.Genre.isin(["Rock", "Metal", "Country", "Jazz", "Folk"])]
+    df = df[df.Genre.isin(unique_genres)]
     df['Length'] = df['Lyrics'].str.len()
-    df = df[(df.Length > 400) & (df.Length < 2000)]
+    df = df[(df.Length > 400) & (df.Length < 4000)]
     genre = df["Genre"]
     df = df.sample(frac=1).reset_index(drop=True)
-    minc = 2000
+    #minc = 2000
+    minc = int(n_songs/len(unique_genres))
     song_dfs = []
     for count, name in zip(genre.value_counts(), genre.value_counts().index):
         song = df[df["Genre"] == name]
         fraction = min(minc / len(song), 1)
         song = song.sample(frac=fraction).reset_index(drop=True)
+        print(len(song), name)
         song_dfs.append(song)
 
     allsongs_df = pd.concat(song_dfs)
@@ -44,7 +46,7 @@ def get_vector(key, alphabet):
 
 def encode(data, alphabet, genres, unique_genres):
     maxlen = len(max(data, key=len))
-    #maxlen = min(1000, maxlen)
+    maxlen = min(2000, maxlen)
     encoded = torch.zeros(maxlen, len(data), len(alphabet) + len(unique_genres))
     indeces = torch.zeros(maxlen, len(data))
     for genre, (j, song) in zip(genres, enumerate(data)):
@@ -76,3 +78,11 @@ def float_range(start, stop, step):
     while start < stop:
         yield float(start)
         start += step
+
+
+def prompt_network(model, prompt_text, prompt_genres, alphabet, unique_genres, temperature=0.45, predict=2000):
+    prompt_encoded, _ = encode(prompt_text, alphabet, prompt_genres, unique_genres)
+    X_prompt = prompt_encoded[:-1]
+    pred = model(X_prompt, predict=predict, temp=temperature)
+    pred = pred.permute(1, 0, 2)
+    return decode(pred, alphabet)
