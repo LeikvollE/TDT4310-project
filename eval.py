@@ -63,24 +63,24 @@ def vocab_quality(songs, preds):
             songs (list): Source songs
             preds (list): Generated songs
     '''
-    unique_words = set()
+    unique_words = set() # set of all unique tokens in the songs
     for song in songs:
         unique_words.update(nltk.word_tokenize(song))
 
-    all_words = set()
+    all_words = set() # set of all tokens in the generated lyrics
     count = 0
     bad_words = 0
     for pred in preds:
         tokens = nltk.word_tokenize(pred)
         all_words.update(tokens)
         count += len(tokens)
-        bad_words += len([word for word in tokens if word not in unique_words])
+        bad_words += len([word for word in tokens if word not in unique_words]) 
     correct_words = len([word for word in all_words if word in unique_words])
-    print([word for word in all_words if word not in unique_words])
-    print(len([word for word in all_words if word not in unique_words]))
+    print([word for word in all_words if word not in unique_words]) # print all incorrect tokens
+    print(len([word for word in all_words if word not in unique_words])) # print number of incorrect tokens
 
-    p = str(correct_words * 100 / len(all_words))[:5] + "%"
-    p2 = str(bad_words * 100 / count)[:5] + "%"
+    p = str(correct_words * 100 / len(all_words))[:5] + "%" # fraction of incorrect tokens in vocabulary
+    p2 = str(bad_words * 100 / count)[:5] + "%" # fraction of incorrect tokens in generated lyrics
     print(
         f"Model used {len(all_words)} tokens, of which {correct_words} are true words ({p}). Total incorrect fraction: ({p2})")
 
@@ -117,7 +117,7 @@ if __name__ == "__main__":
         vocab_quality(songs, all_preds) # print vocab quality
     all_tfs, pred_tfs = tf_idf(songs, all_preds) # encode as TF-IDF
     songs_dict = defaultdict(lambda: [])
-    for song, genre in zip(all_tfs, genres):
+    for song, genre in zip(all_tfs, genres): 
         songs_dict[genre].append(song)
 
     for genre, i in zip(unique_genres, range(0, len(unique_genres) * prompts_per_genre, prompts_per_genre)):
