@@ -100,15 +100,14 @@ def encode(data, alphabet, genres, unique_genres):
     '''
 
     maxlen = len(max(data, key=len))
-    #encoded = torch.zeros(maxlen, len(data), len(alphabet) + len(unique_genres))
-    encoded = torch.zeros(maxlen, len(data), len(alphabet))
+    encoded = torch.zeros(maxlen, len(data), len(alphabet) + len(unique_genres))
     indeces = torch.zeros(maxlen, len(data))
     for genre, (j, song) in zip(genres, enumerate(data)):
         for i, letter in enumerate(song):
             if i == maxlen:
                 break
             encoded[i][j][alphabet.index(letter)] = 1 # One hot of char
-            #encoded[i][j][len(alphabet) + unique_genres.index(genre)] = 1 # One hot of genre
+            encoded[i][j][len(alphabet) + unique_genres.index(genre)] = 1 # One hot of genre
             indeces[i][j] = alphabet.index(letter) # Setting index of the one hot char vector
         # Padding song with end-of-song tokens to match maxlen
         for i in range(maxlen - len(song)):
