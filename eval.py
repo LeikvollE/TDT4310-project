@@ -1,119 +1,159 @@
 import torch
-import torch.nn as nn
-import csv
 import numpy as np
-import torch.optim as optim
-import pandas as pd
-import re
-import pickle
-from tqdm import tqdm
-from collections import Counter
-import torch.nn.functional as F
-from torch.nn.utils.rnn import pad_sequence
-from util import encode, decode, load_songs, get_alphabet, find_char, float_range
+from util import load_songs, get_alphabet, float_range, generate_genre_prompts, prompt_network
 from collections import defaultdict
-from Network import LyricSTM
-import random
 import nltk
+from Network import LyricSTM
+from SingleGenreNetwork import SingleLyricSTM as LyricSTM
 
 import statistics
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-def tf_idf(songs, pred):
+def tf_idf(songs, preds):
+    '''
+    Calculates TF-IDF vectors based on source songs and generated songs using sklearn
+        Parameters:
+            songs (list): Source songs from train
+            preds (list): Generated songs
+        Returns:
+            (list): TF-IDF vectors of source songs
+            (list): TF-IDF vectors of generated songs
+    '''
     vectorizer = TfidfVectorizer()
-    X = vectorizer.fit_transform(songs + [pred]).toarray()
-    return X[:-1], X[-1]
+    X = vectorizer.fit_transform(songs + preds).toarray()
+    return X[:-len(preds)], X[-len(preds):]
 
-def semantic_sim(gts, pred):
-    tf_vectors, pred_vector = tf_idf(gts, pred)
+def semantic_sim(tf_vectors, pred_vector):
+    '''
+    Calculates the semantic relatedness score between a group of songs and a single song
+        Parameters:
+            tf_vectors (list): List of TF-IDF vectors from base songs
+            pred_vector (list): TF-IDF representation of song to calculate score for
+    '''
     scores = []
     for vector in tf_vectors:
         scores.append(cosine_dist(vector, pred_vector))
     return statistics.mean(scores)
 
 def cosine_dist(song1, song2):
+    '''
+    Calculates the cosine distance between two vectors
+        Parameters:
+            song1 (list): Vector 1
+            song2 (list): Vector 2
+    '''
     return np.dot(song1, song2)/(np.linalg.norm(song1) * np.linalg.norm(song2))
 
-def lyrical_uniqueness(gts, pred):
-    tf_vectors, pred_vector = tf_idf(gts, pred)
+def lyrical_uniqueness(tf_vectors, pred_vector):
+    '''
+        Calculates the lyrical similarity score between a group of songs and a single song
+            Parameters:
+                tf_vectors (list): List of TF-IDF vectors from base songs
+                pred_vector (list): TF-IDF representation of song to calculate score for
+        '''
     scores = []
     for vector in tf_vectors:
         scores.append(cosine_dist(vector, pred_vector))
     return max(scores)
 
 def vocab_quality(songs, preds):
+    '''
+    Calculates vocaularity size of generated songs, and how many words in the vocabulary also exists in source material
+        Parameters:
+            songs (list): Source songs
+            preds (list): Generated songs
+    '''
     unique_words = set()
     for song in songs:
         unique_words.update(nltk.word_tokenize(song))
 
     all_words = set()
+    count = 0
+    bad_words = 0
     for pred in preds:
-        all_words.update(nltk.word_tokenize(pred))
-    correct_words = len([1 for word in all_words if word in unique_words])
+        tokens = nltk.word_tokenize(pred)
+        all_words.update(tokens)
+        count += len(tokens)
+        bad_words += len([word for word in tokens if word not in unique_words])
+    correct_words = len([word for word in all_words if word in unique_words])
+    print([word for word in all_words if word not in unique_words])
+    print(len([word for word in all_words if word not in unique_words]))
 
     p = str(correct_words * 100 / len(all_words))[:5] + "%"
-    print(f"Model used {len(all_words)} tokens, of which {correct_words} are true words ({p})")
+    p2 = str(bad_words * 100 / count)[:5] + "%"
+    print(
+        f"Model used {len(all_words)} tokens, of which {correct_words} are true words ({p}). Total incorrect fraction: ({p2})")
 
 
 if __name__ == "__main__":
-    minibatch_size = 32
-    model_file = "models/fixednet/model"
 
-    songs, genres = load_songs()
+    unique_genres = ["Jazz"]#sorted(["Rock", "Metal", "Country", "Jazz", "Hip-Hop"])  # sorted(list(set(genres)))
+
+    songs, genres = load_songs(unique_genres)
     songs_dict = defaultdict(lambda: [])
     for song, genre in zip(songs, genres):
         songs_dict[genre].append(song)
     alphabet = get_alphabet(songs)
-    unique_genres = sorted(list(set(genres)))
 
-    prompt = ["When you think "]*len(unique_genres)
-    prompt_genre = unique_genres
-    prompt_encoded, _ = encode(prompt, alphabet, prompt_genre, unique_genres)
-    X_prompt = prompt_encoded[:-1]
-    model_ = torch.load("models/fixednet/model_checkpoint_5")
-    model = LyricSTM(model_.n_hidden, model_.feature_size, model_.alphabet)
-    model.load_state_dict(model_.state_dict())
+    model = torch.load("models/newnetonegenre2/model_checkpoint_10")
+    #model = LyricSTM(model_.n_hidden, model_.feature_size, model_.alphabet, )
+    #model.load_state_dict(model_.state_dict())
 
-
+    prompts_per_genre = 50
+    prompt_length = 16
+    predict = 2000
+    temp = 0.4
     predictions = {}
     all_preds = []
-
-    prompts_per_genre = 10
-    prompt_length = 16
-    predict = 1000
+    texts = defaultdict(lambda: [])
     with torch.no_grad():
         for genre in unique_genres:
-            prompts = []
-            for i, song in enumerate(songs):
-                if len(prompts) == prompts_per_genre:
-                    break
-                if genres[i] == genre:
-                    indeces = find_char(song, "\n")
-                    indeces = indeces[:-1]
-                    if len(indeces) == 0:
-                        prompts.append(song[:prompt_length])
-                        continue
-                    index = indeces[random.randint(0, len(indeces)-1)]
-                    prompts.append(song[index + 1:index + 1 + prompt_length])
-            prompt_genre = [genre for i in range(prompts_per_genre)]
-            prompt_encoded, _ = encode(prompts, alphabet, prompt_genre, unique_genres)
-            X_prompt = prompt_encoded[:-1]
+            prompts, prompt_genre = generate_genre_prompts(songs, genres, ["Jazz"], prompts_per_genre,
+                                                           prompt_length=prompt_length)
+            pred_decoded = prompt_network(model, prompts, prompt_genre, model.alphabet, unique_genres,
+                                          temperature=temp, predict=predict)
+            all_preds.extend(pred_decoded)
+            texts[genre].extend([prompts[i] + song[len(prompts[i]):] for i, song in enumerate(pred_decoded)])
+        vocab_quality(songs, all_preds)
+    all_tfs, pred_tfs = tf_idf(songs, all_preds)
+    songs_dict = defaultdict(lambda: [])
+    for song, genre in zip(all_tfs, genres):
+        songs_dict[genre].append(song)
 
-            pred = model(X_prompt, predict=predict, temp=0.45)
-            pred = pred.permute(1,0,2)
-            pred_decoded = decode(pred, alphabet)
-            predictions[genre] = pred_decoded
-            all_preds += pred_decoded
+    for genre, i in zip(unique_genres, range(0, len(unique_genres) * prompts_per_genre, prompts_per_genre)):
+        predictions[genre] = pred_tfs[i:i + prompts_per_genre]
+        print(len(predictions[genre]), len(texts[genre]))
 
-    vocab_quality(songs, all_preds)
-
-    for genre in predictions.keys():
-        avg = defaultdict(lambda: 0)
-        print(f"--{genre}--")
-        for s in predictions[genre]:
+    for genre in unique_genres:
+        genre_sems = defaultdict(lambda: [])
+        best_sem = 0
+        best_sem_i = 0
+        w_sem = 20
+        w_sem_i = 0
+        genre_lyrs = []
+        print("\subsubsection{" + genre + "}")
+        for i, s in enumerate(predictions[genre]):
+            genre_lyrs.append(lyrical_uniqueness(songs_dict[genre], s))
             for genre2 in predictions.keys():
-                avg[genre2] += semantic_sim(songs_dict[genre2], s)
+                sem = semantic_sim(songs_dict[genre2], s)
+                genre_sems[genre2].append(sem)
+                if sem > best_sem:
+                    best_sem = sem
+                    best_sem_i = i
+                if sem < w_sem:
+                    w_sem = sem
+                    w_sem_i = i
+        print("Lyrical similarity score (for this 1 song): ",
+              lyrical_uniqueness(songs_dict[genre], predictions[genre][best_sem_i]),
+              " Semantic relatedness (highest for this genre): ", best_sem)
+        print("Lyrical similarity score (for this other song): ",
+              lyrical_uniqueness(songs_dict[genre], predictions[genre][w_sem_i]),
+              " Semantic relatedness (lowest for this genre): ", w_sem)
+        print("Avg lyrical sim for this genre", statistics.mean(genre_lyrs), " std ", statistics.stdev(genre_lyrs),
+              "Max: ", max(genre_lyrs), "Min: ", min(genre_lyrs))
         for genre2 in predictions.keys():
-            print(f"--{genre2} {avg[genre2]/prompts_per_genre}")
+            print(f"Semantic similarity to {genre2} {sum(genre_sems[genre2]) / prompts_per_genre}")
+
+        # print(r"\textbf{" + texts[genre][best_sem_i])
 
     print("\n")
