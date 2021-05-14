@@ -107,15 +107,15 @@ if __name__ == "__main__":
     all_preds = []
     texts = defaultdict(lambda: [])
     with torch.no_grad():
-        for genre in unique_genres:
+        for genre in unique_genres: # generate prompts for all genres
             prompts, prompt_genre = generate_genre_prompts(songs, genres, ["Jazz"], prompts_per_genre,
                                                            prompt_length=prompt_length)
             pred_decoded = prompt_network(model, prompts, prompt_genre, model.alphabet, unique_genres,
                                           temperature=temp, predict=predict)
             all_preds.extend(pred_decoded)
             texts[genre].extend([prompts[i] + song[len(prompts[i]):] for i, song in enumerate(pred_decoded)])
-        vocab_quality(songs, all_preds)
-    all_tfs, pred_tfs = tf_idf(songs, all_preds)
+        vocab_quality(songs, all_preds) # print vocab quality
+    all_tfs, pred_tfs = tf_idf(songs, all_preds) # encode as TF-IDF
     songs_dict = defaultdict(lambda: [])
     for song, genre in zip(all_tfs, genres):
         songs_dict[genre].append(song)
@@ -124,25 +124,26 @@ if __name__ == "__main__":
         predictions[genre] = pred_tfs[i:i + prompts_per_genre]
         print(len(predictions[genre]), len(texts[genre]))
 
-    for genre in unique_genres:
+    for genre in unique_genres: # evaluate lyrics genre by genre
         genre_sems = defaultdict(lambda: [])
         best_sem = 0
         best_sem_i = 0
         w_sem = 20
         w_sem_i = 0
         genre_lyrs = []
-        print("\subsubsection{" + genre + "}")
+        print("---" + genre + "---")
         for i, s in enumerate(predictions[genre]):
-            genre_lyrs.append(lyrical_uniqueness(songs_dict[genre], s))
+            genre_lyrs.append(lyrical_uniqueness(songs_dict[genre], s)) # store lyrical similarity
             for genre2 in predictions.keys():
                 sem = semantic_sim(songs_dict[genre2], s)
                 genre_sems[genre2].append(sem)
-                if sem > best_sem:
+                if sem > best_sem: # store indeces of best and worst songs (semantic relatedness)
                     best_sem = sem
                     best_sem_i = i
                 if sem < w_sem:
                     w_sem = sem
                     w_sem_i = i
+        #print statistics:
         print("Lyrical similarity score (for this 1 song): ",
               lyrical_uniqueness(songs_dict[genre], predictions[genre][best_sem_i]),
               " Semantic relatedness (highest for this genre): ", best_sem)
@@ -154,6 +155,6 @@ if __name__ == "__main__":
         for genre2 in predictions.keys():
             print(f"Semantic similarity to {genre2} {sum(genre_sems[genre2]) / prompts_per_genre}")
 
-        # print(r"\textbf{" + texts[genre][best_sem_i])
+        # print(r"\textbf{" + texts[genre][best_sem_i]) # print song
 
     print("\n")
